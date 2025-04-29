@@ -26,7 +26,7 @@ void i2c_master_setup(void) {
     
 }
 
- void update_LCD(int modeID, int temperature, int window_size) {
+void update_LCD(int modeID, int tempAmbient, int tempPelt, int window_size, int timeSec) {
     while(i2c_busy);
     i2c_busy = 1;
 
@@ -65,7 +65,7 @@ void i2c_master_setup(void) {
     UCB0IE |= UCTXIE0;
 }
 
- void i2c_write_led(unsigned int pattNum) {
+void i2c_write_led(unsigned int pattNum) {
     while(i2c_busy);
     i2c_busy = 1;
 
