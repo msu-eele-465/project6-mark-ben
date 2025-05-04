@@ -26,7 +26,29 @@ void i2c_master_setup(void) {
     
 }
 
-void update_LCD(int modeID, int tempAmbient, int tempPelt, int window_size, int timeSec) {
+void update_LCD(unsigned int modeID, unsigned int tempAmbient, unsigned int tempPelt, unsigned int window_size, unsigned int timeSec) {
+    if (modeID != 0x00FF) {
+        update_LCD_raw(0, modeID);
+    }
+
+    if (tempAmbient != 0x00FF) {
+        update_LCD_raw(1, tempAmbient);
+    }
+
+    if (tempPelt != 0x00FF) {
+        update_LCD_raw(2, tempPelt);
+    }
+
+    if (window_size != 0x00FF) {
+        update_LCD_raw(3, window_size);
+    }
+
+    if (timeSec != 0x00FF) {
+        update_LCD_raw(4, timeSec);
+    }
+}
+
+void update_LCD_raw(uint8_t opcode, unsigned int operand) {
     while(i2c_busy);
     i2c_busy = 1;
 
@@ -35,17 +57,14 @@ void update_LCD(int modeID, int tempAmbient, int tempPelt, int window_size, int 
     UCB0CTLW0 |= UCTR;  // Transmit mode
     UCB0I2CSA = 0x02;   // Slave address
 
-    UCB0TBCNT = 4;
+    UCB0TBCNT = 3;
 
     UCB0IFG &= ~UCSTPIFG;
 
-    uint8_t lcdData[4];
-    lcdData[0] = (uint8_t) modeID;
-    lcdData[1] = (int)((temperature >> 8) & 0xFF);
-    lcdData[2] = (int)(temperature & 0xFF);
-    lcdData[3] = (uint8_t) window_size;
-
-    
+    uint8_t lcdData[3];
+    lcdData[0] = opcode;
+    lcdData[1] = (uint8_t)((operand >> 8) & 0xFF);
+    lcdData[2] = (uint8_t)(operand & 0xFF);
 
     UCB0CTLW0 |= UCTXSTT;
     int i;
