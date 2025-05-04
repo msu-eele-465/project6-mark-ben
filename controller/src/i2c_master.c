@@ -1,4 +1,5 @@
 #include "msp430fr2355.h"
+#include <cstdint>
 #include <msp430.h>
 #include "i2c_master.h"
 #include <stdint.h>
@@ -104,5 +105,30 @@ void i2c_write_led(unsigned int pattNum) {
 
     i2c_busy = 0;
 
-} 
+}
+
+int i2c_read_lm92() {
+    unsigned int high_byte;
+    unsigned int low_byte;
+
+    while (i2c_busy);
+    i2c_busy = 1;
+
+    UCB0CTLW0 &= ~UCTR; // Switch to receive
+    UCB0I2CSA = 0b01001000; // Set slave address
+
+    UCB0TBCNT = 2; // Set count
+
+    UCB0CTLW0 |= UCTXSTT; // Generate start condition
+
+    while (!(UCB0IFG & UCRXIFG));
+    high_byte = UCB0RXBUF;
+
+    while (!(UCB0IFG & UCRXIFG));
+    low_byte = UCB0RXBUF;
+
+    UCB0CTLW0 |= UCTR; // Switch to tx
+
+    return (high_byte << 5) + (low_byte >> 3);
+}
  
