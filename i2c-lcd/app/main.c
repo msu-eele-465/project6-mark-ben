@@ -1,12 +1,17 @@
 #include "intrinsics.h"
+#include <exception>
 #include <msp430fr2310.h>
 #include <stdbool.h>
 
 // ------- Global Variables ------------
-volatile int curr_top_mode = -1;
-volatile int curr_temp_high = 0x10;
-volatile int curr_temp_low = 0;
-volatile int curr_window = 0;
+volatile uint16_t curr_top_mode = -1;
+volatile uint16_t curr_temp_a = 0;
+volatile uint16_t curr_temp_p = 0;
+volatile uint16_t curr_window = 0;
+volatile uint16_t curr_time = 0;
+volatile int i2c_opcode = -1;
+volatile uint8_t i2c_operand_high = 0;
+volatile uint8_t i2c_operand_low = 0;
 volatile int i2c_state = 0;
 int cursor = 0;
 int blink = 0;
@@ -92,31 +97,39 @@ void update_top_mode(char* string) {
     lcd_string_write(string);
 }
 
-void update_temp(char* string) {
-    lcd_raw_send((0x40 + 0b10000000), 2); // Start of the second row
+void update_temp_a(char* string) {
+    lcd_raw_send((0x08 + 0b10000000), 2);
 
     lcd_string_write(string);
 }
+void update_temp_p(char* string) {
+    lcd_raw_send((0x48 + 0b10000000), 2);
 
+    lcd_string_write(string);
+}
 void update_window(char* string) {
-    lcd_raw_send((0x4D + 0b10000000), 2); // Three characters before end of second row
+    lcd_raw_send((0x40 + 0b10000000), 2);
+
+    lcd_string_write(string);
+}
+void update_time(char* string) {
+    lcd_raw_send((0x42 + 0b10000000), 2);
 
     lcd_string_write(string);
 }
 
 int main(void)
 {
-    int last_top_mode = curr_top_mode;
-    int curr_temp_full;
-    int last_temp;
-    int last_window = curr_window;
+    uint16_t last_top_mode = curr_top_mode;
+    uint16_t last_temp_a = curr_temp_a;
+    uint16_t last_temp_p = curr_temp_p;
+    uint16_t last_window = curr_window;
+    uint16_t last_time = curr_time;
+
     char buffer[10];
 
     // Stop watchdog timer
     WDTCTL = WDTPW | WDTHOLD;
-
-    curr_temp_full = (curr_temp_high << 8) + curr_temp_low;
-    last_temp = curr_temp_full;
 
     P2OUT &= ~BIT0;
     P2DIR |= BIT0;
@@ -173,65 +186,31 @@ int main(void)
         // Delay for 100000*(1/MCLK)=0.1s
         __delay_cycles(100000);
 
-
-        // Check for no changes
-        if (curr_top_mode == 0xFF) {
-            curr_top_mode = last_top_mode;
-        }
-        if (curr_temp_low == 0xFF && curr_temp_high == 0xFF) {
-            curr_temp_high = last_temp >> 8;
-            curr_temp_low = last_temp & 0xFF;
-        }
-        if (curr_window == 0xFF) {
-            curr_window = last_window;
-        }
-
-        // Update curr_temp_full
-        curr_temp_full = (curr_temp_high << 8) + curr_temp_low;
-
         // Update based on top level mode
-        if (curr_top_mode != last_top_mode && curr_top_mode != 0xFF) {
+        if (curr_top_mode != last_top_mode) {
             switch (curr_top_mode) {
                 case 0:
-                    update_top_mode("static         ");
+                    update_top_mode("heat    ");
                     break;
                 case 1:
-                    update_top_mode("toggle         ");
+                    update_top_mode("cool    ");
                     break;
                 case 2:
-                    update_top_mode("up counter     ");
+                    update_top_mode("off     ");
                     break;
                 case 3:
-                    update_top_mode("in and out     ");
+                    update_top_mode("match   ");
                     break;
-                case 4:
-                    update_top_mode("down counter   ");
-                    break;
-                case 5:
-                    update_top_mode("rotate 1 left  ");
-                    break;
-                case 6:
-                    update_top_mode("rotate 7 right ");
-                    break;
-                case 7:
-                    update_top_mode("fill left      ");
-                    break;
-                case 10:
-                    update_top_mode("set pattern    ");
-                    break;
-                case 11:
-                    update_top_mode("set window size");
-                    break;
-                case 0xFE:
-                    update_top_mode("               ");
+                case 0x00FE:
+                    update_top_mode("        ");
                     break;
             }
             last_top_mode = curr_top_mode;
         }
 
         // Update based on temp
-        if (curr_temp_full != last_temp && curr_temp_low != 0xFF && curr_temp_high != 0xFF) {
-            if (curr_temp_low == 0xFE && curr_temp_high == 0xFE) {
+        if (curr_temp_a != last_temp_a) {
+            if (curr_temp_a == 0x00FE) {
                 buffer[0] = ' '; 
                 buffer[1] = ' ';
                 buffer[2] = ' ';
@@ -242,37 +221,79 @@ int main(void)
                 buffer[7] = ' ';
                 buffer[8] = '\0';
             } else {
-                buffer[0] = 'T';
-                buffer[1] = '=';
-                buffer[2] = 0x30 + (curr_temp_full / 100);
-                buffer[3] = 0x30 + ((curr_temp_full % 100) / 10);
+                buffer[0] = 'A';
+                buffer[1] = ':';
+                buffer[2] = 0x30 + (curr_temp_a / 100);
+                buffer[3] = 0x30 + ((curr_temp_a % 100) / 10);
                 buffer[4] = '.';
-                buffer[5] = 0x30 + (curr_temp_full % 10);
+                buffer[5] = 0x30 + (curr_temp_a % 10);
                 buffer[6] = 0xDF; // Degree symbol
                 buffer[7] = 'C';
                 buffer[8] = '\0';
             }
-            update_temp(buffer);
-            last_temp = curr_temp_full;
+            update_temp_a(buffer);
+            last_temp_a = curr_temp_a;
+        }
+
+        // Update based on temp
+        if (curr_temp_p != last_temp_p) {
+            if (curr_temp_p == 0x00FE) {
+                buffer[0] = ' '; 
+                buffer[1] = ' ';
+                buffer[2] = ' ';
+                buffer[3] = ' ';
+                buffer[4] = ' ';
+                buffer[5] = ' ';
+                buffer[6] = ' ';
+                buffer[7] = ' ';
+                buffer[8] = '\0';
+            } else {
+                buffer[0] = 'P';
+                buffer[1] = ':';
+                buffer[2] = 0x30 + (curr_temp_p / 100);
+                buffer[3] = 0x30 + ((curr_temp_p % 100) / 10);
+                buffer[4] = '.';
+                buffer[5] = 0x30 + (curr_temp_p % 10);
+                buffer[6] = 0xDF; // Degree symbol
+                buffer[7] = 'C';
+                buffer[8] = '\0';
+            }
+            update_temp_p(buffer);
+            last_temp_p = curr_temp_p;
         }
 
         // Update based on window
-        if (curr_window != last_window && curr_window != 0xFF) {
-            if (curr_window == 0xFE) {
+        if (curr_window != last_window) {
+            if (curr_window == 0x00FE) {
+                buffer[0] = ' ';
+                buffer[1] = '\0';
+            } else {
+                buffer[0] = 0x30 + curr_window;
+                buffer[1] = '\0';
+            }
+            update_window(buffer);
+            last_window = curr_window;
+        }
+
+        // Update timer
+        if (curr_time != last_time) {
+            if (curr_time == 0x00FE) {
                 buffer[0] = ' ';
                 buffer[1] = ' ';
                 buffer[2] = ' ';
                 buffer[3] = ' ';
                 buffer[4] = '\0';
             } else {
-                buffer[0] = 'N';
-                buffer[1] = '=';
-                buffer[2] = 0x30 + curr_window;
-                buffer[3] = '\0';
+                buffer[0] = 0x30 + (curr_time / 100);
+                buffer[1] = 0x30 + ((curr_time % 100) / 10);
+                buffer[2] = 0x30 + (curr_time % 10);
+                buffer[3] = 's';
+                buffer[4] = '\0';
             }
-            update_window(buffer);
-            last_window = curr_window;
+            update_time(buffer);
+            last_time = curr_time;
         }
+
     }
 }
 
@@ -280,27 +301,46 @@ int main(void)
 __interrupt void EUSCI_B0_I2C_ISR(void){
     int current = UCB0IV;
     int read_data;
+    uint16_t complete_operand = 0;
 
     switch(current) {
     case 0x08: // Rx stop condition
         i2c_state = 0;
         P2OUT ^= BIT0;
-        //UCB0CTLW0 |= UCTXACK;
+        i2c_opcode = -1;
         break;
     case 0x16: // Rx data
         read_data = UCB0RXBUF;
         switch(i2c_state) {
         case 0: // Rx top level mode
-            curr_top_mode = read_data;
+            i2c_opcode = read_data;
             break;
         case 1: // Rx temp
-            curr_temp_high = read_data;
+            i2c_operand_high = read_data;
             break;
         case 2:
-            curr_temp_low = read_data;
-            break;
-        case 3: // Rx window mode
-            curr_window = read_data;
+            i2c_operand_low = read_data;
+
+            complete_operand = (i2c_operand_high << 8) + i2c_operand_low;
+
+            switch(i2c_opcode) {
+            case 0:
+                curr_top_mode = complete_operand;
+                break;
+            case 1:
+                curr_temp_a = complete_operand;
+                break;
+            case 2:
+                curr_temp_p = complete_operand;
+                break;
+            case 3:
+                curr_window = complete_operand;
+                break;
+            case 4:
+                curr_time = complete_operand;
+                break;
+            }
+
             break;
         }
         i2c_state++;
