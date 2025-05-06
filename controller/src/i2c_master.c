@@ -1,7 +1,7 @@
 #include "msp430fr2355.h"
-#include <cstdint>
 #include <msp430.h>
 #include "i2c_master.h"
+#include "temp_sensor.h"
 #include <stdint.h>
 
 volatile int i2c_busy = 0;
