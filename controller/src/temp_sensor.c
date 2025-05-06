@@ -1,21 +1,27 @@
 #include <msp430.h>
 #include <math.h>
+#include "../src/i2c_master.h"
+#include <stdint.h>
 
-volatile unsigned int ADC_value;
-volatile int temperature;
-volatile unsigned int mov_avg_index = 0;
-volatile unsigned int count = 0;
-volatile unsigned int temp_update_flag = 0;
 volatile unsigned int window_size = 3;
-volatile float mov_avg_buffer[100];
-volatile float numerator;
-volatile float denominator;
-volatile float add;
-volatile float base;
-volatile float square;
-volatile float running_sum = 0.0f;
-volatile float moving_average = 0.0f;
-volatile int sample_ready = 0;
+// — Ambient (LM19) moving average —
+volatile float   ambient_buf[100];
+volatile uint8_t ambient_index = 0;
+volatile uint8_t ambient_count = 0;
+volatile float   ambient_sum   = 0;
+volatile float moving_average_ambient      = 0;
+volatile uint8_t ambient_temp_update_flag  = 0;
+// — Plant (LM92) moving average —
+volatile float   plant_buf[100];
+volatile uint8_t plant_index   = 0;
+volatile uint8_t plant_count   = 0;
+volatile float   plant_sum     = 0;
+volatile float moving_average_plant        = 0;
+volatile uint8_t plant_temp_update_flag    = 0;
+// ADC sampling state
+volatile float ADC_value     = 0;
+volatile uint8_t  sample_ready  = 0;
+volatile uint8_t plant_read_flag = 0;
 
 void setup_ADC() {
 
@@ -45,38 +51,48 @@ void setup_temp_timer() {
     TB3CCTL0 |= CCIE;                                       // Enable Interrupt
     TB3CCTL0 &= ~CCIFG;
 }
+// Push a new ambient sample into the moving average
+void push_ambient(float sample) {
+    ambient_sum -= ambient_buf[ambient_index];
+    ambient_buf[ambient_index] = sample;
+    ambient_sum += sample;
+    ambient_index = (ambient_index + 1) % window_size;
+    if (ambient_count < window_size) ambient_count++;
+    moving_average_ambient     = ambient_sum / ambient_count;
+    ambient_temp_update_flag   = 1;
+}
+
+// Push a new plant sample into the moving_average
+void push_plant(float sample) {
+    plant_sum -= plant_buf[plant_index];
+    plant_buf[plant_index] = sample;
+    plant_sum += sample;
+    plant_index = (plant_index + 1) % window_size;
+    if (plant_count < window_size) plant_count++;
+    moving_average_plant       = plant_sum / plant_count;
+    plant_temp_update_flag     = 1;
+}
+
 
 void compute_temp() {
     if (sample_ready) {
         __disable_interrupt();
         sample_ready = 0;
         float voltage = ADC_value * 0.000805f;
+        __enable_interrupt();
 
-        numerator = 1.8639f - voltage;
-        denominator = 3.88f * .00001f;
-        add = 2.1962f * 1000000;
-        base = (numerator/denominator) + add;
+        float numerator = 1.8639f - voltage;
+        float denominator = 3.88f * .00001f;
+        float add = 2.1962f * 1000000;
+        float base = (numerator/denominator) + add;
 
-        square = sqrt(base);
+        float square = sqrt(base);
         //square = powf(base,0.5f);
         float new_sample = (-1481.96f + square);
         new_sample = 10 * new_sample;
-        if (count < window_size) {
-            mov_avg_buffer[mov_avg_index] = new_sample;
-            running_sum += new_sample;
-            count++;
-            mov_avg_index = (mov_avg_index + 1) % window_size;
-        } else {
-            running_sum -= mov_avg_buffer[mov_avg_index];
-            mov_avg_buffer[mov_avg_index] = new_sample;
-            running_sum += new_sample;
-            mov_avg_index = (mov_avg_index + 1) % window_size;
-            
-            moving_average = running_sum / window_size;
-            moving_average = 10 * moving_average;
-            temp_update_flag = 1;
-        } 
+        push_ambient(new_sample);
         __enable_interrupt();
+        
     }
     
 }
@@ -94,5 +110,6 @@ __interrupt void Timer3_B0_ISR(void) {
     TB3CCTL0 &= ~CCIFG;
 
     ADCCTL0 |= ADCENC | ADCSC;                              // Trigger new ADC conversion every 0.5 seconds
+    plant_read_flag = 1;
 }
 

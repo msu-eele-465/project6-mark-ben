@@ -22,8 +22,6 @@ volatile int led_mode = 0;
 volatile uint8_t led_count = 0;
 
 volatile uint8_t time_spent_update_flag = 0;
-volatile uint8_t plant_temp_update_flag = 0;
-volatile uint8_t ambient_temp_update_flag = 0;
 
 volatile uint8_t time_count = 0;
 
@@ -51,9 +49,9 @@ void setup_ledbar_update_timer() {
 void rgb_timer_setup() {
 
     TB2R = 0;
-    TB2CTL |= (TBSSEL__SMCLK | MC__UP);                       // Small clock, Up counter
-    TB2CCR0 = 512;                                            // 1 sec timer
-    TB2CCTL0 |= CCIE;                                         // Enable Interrupt
+    TB2CTL |= (TBSSEL__SMCLK | MC__UP);                                 // Small clock, Up counter
+    TB2CCR0 = 512;                                                      // 1 sec timer
+    TB2CCTL0 |= CCIE;                                                   // Enable Interrupt
     TB2CCTL0 &= ~CCIFG;
 }
 
@@ -61,13 +59,13 @@ uint8_t compute_ledbar() {
     uint8_t led_pins = 0;
 
     switch (led_mode) {
-        case 1:
+        case 2:
             if(led_count < 8) {
                 led_count++;
             }
             led_pins = ((1u << led_count) - 1) << (8 - led_count);
             break;
-        case 2:
+        case 1:
             if (led_count < 8) {
                 led_count++;
             }
@@ -96,8 +94,10 @@ void process_keypad() {
     if(key == 'A') {
         peltier_mode = 1;
         led_count = 0;
-        led_mode = 1;
-        mode_start_time = read_RTC();
+        led_mode = peltier_mode;
+        send_i2c_update_flag = 1;
+        //mode_start_time = read_RTC();
+        update_LCD(1, 0xFF,0xFF,0xFF,mode_start_time);
     } 
 // ----------------------------------------------------------------------------------------------------------------------------------------
 // ------------- COOL ---------------------------------------------------------------------------------------------------------------------
@@ -105,14 +105,31 @@ void process_keypad() {
     else if (key == 'B') {
         peltier_mode = 2;
         led_count = 0;
-        led_mode = 2;
-        mode_start_time = read_RTC();
+        led_mode = peltier_mode;
+        send_i2c_update_flag = 1;
+        //mode_start_time = read_RTC();
+        update_LCD(2, 0xFF,0xFF,0xFF,mode_start_time);
     } 
 // ----------------------------------------------------------------------------------------------------------------------------------------
 // ------------- MATCH --------------------------------------------------------------------------------------------------------------------
 // ----------------------------------------------------------------------------------------------------------------------------------------    
     else if (key == 'C') {
         peltier_mode = 3;
+        led_mode = 0;              
+        led_count = 0;             // restart the fill
+        send_i2c_update_flag = 1;  
+        //mode_start_time = read_RTC();
+        update_LCD(3, 0xFF,0xFF,0xFF,mode_start_time);
+    }
+
+    else if (key == 'D') {
+        peltier_mode = 0;
+        mode_start_time = 0;
+        ambient_temp_update_flag = 0;
+        plant_temp_update_flag = 0;
+        led_mode = 0;
+        plant_read_flag = 0;
+        update_LCD(0xFE, 0xFE, 0xFE, 0xFE, 0xFE);
     }
 
 
@@ -127,22 +144,57 @@ void process_flags(void) {
 
     if(ambient_temp_update_flag) {
         ambient_temp_update_flag = 0;
-        update_LCD_async(0xFF, (int) moving_average, 0xFF);
+        update_LCD(0xFF, moving_average_ambient, 0xFF, 0xFF, 0xFF);
     }
 
     if(plant_temp_update_flag) {
         plant_temp_update_flag = 0;
-        //update_LCD_async();
+        update_LCD(0xFF, 0xFF, moving_average_plant, 0xFF, 0xFF);
     }
 
     if(time_spent_update_flag) {
         time_spent_update_flag = 0;
+        //update_LCD(0xFF,0xFF,0xFF,0xFF, read_RTC() - mode_start_time);
     }
 }
 
-void update_LCD_async(int modeID, int temperature, int window_size) {
-    if (state_variable != 0 && state_variable != 2) {
-        update_LCD(modeID, temperature, window_size);
+void update_peltier_mode(void) {
+    switch(peltier_mode) {
+        case 0:
+            P5OUT &= ~(BIT0|BIT1);
+            break;
+        case 1:                             // Heat mode
+            P5OUT &= ~(BIT0|BIT1);
+            P5OUT |= BIT1;
+            led_mode = 1;
+            break;
+        case 2:                             // Cool mode
+            P5OUT &= ~(BIT0|BIT1);
+            P5OUT |= BIT0;
+            led_mode = 2;
+            break;
+        case 3: {
+            float dif = moving_average_ambient - moving_average_plant;
+            float thresh = 0.1f;
+            if (dif > thresh) {             // Plant too hot
+                P5OUT &= ~(BIT0|BIT1);
+                P5OUT |= BIT0;
+                led_mode = 2;
+                send_i2c_update_flag = 1;
+            } else if (dif < -thresh) {     // Plant too cool
+                P5OUT &= ~(BIT0|BIT1);
+                P5OUT |= BIT1;
+                led_mode = 1;        
+                send_i2c_update_flag = 1;        
+            } else {
+                P5OUT &= ~(BIT0|BIT1);
+                led_mode = 0;
+            }
+            send_i2c_update_flag = 1;
+            break;
+        }
+        default:
+            break;
     }
 }
 
@@ -150,6 +202,9 @@ int main(void)
 {
     WDTCTL = WDTPW | WDTHOLD;               // Stop watchdog timer
     
+    P5DIR |= BIT0 | BIT1;
+    P5OUT &= ~(BIT0 | BIT1);
+
     P1DIR |= BIT0;
     P1OUT &= ~BIT0;
     i2c_master_setup();
@@ -175,6 +230,26 @@ int main(void)
     {
         process_keypad();
         compute_temp();
+        if (plant_read_flag) {
+            plant_read_flag = 0;
+            int raw = i2c_read_lm92();
+            int8_t  msb = (raw >> 8) & 0xFF;
+            uint8_t lsb = raw & 0xFF;
+            float temp_c = msb + (lsb / 256.0f);
+            push_plant(temp_c);
+        }
+        if(peltier_mode != 0) {
+/*             if((read_RTC() - mode_start_time) >= 300) {
+                peltier_mode = 0;
+                mode_start_time = 0;
+                ambient_temp_update_flag = 0;
+                plant_temp_update_flag = 0;
+                led_mode = 0;
+                plant_read_flag = 0;
+                update_LCD(0xFE, 0xFE, 0xFE, 0xFE, 0xFE);
+            } */
+            update_peltier_mode();
+        }
         while(i2c_busy);
         process_flags();
     }
