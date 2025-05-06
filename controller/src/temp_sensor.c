@@ -3,16 +3,16 @@
 #include "../src/i2c_master.h"
 #include <stdint.h>
 
-volatile unsigned int window_size = 3;
+const unsigned int window_size = 3;
 // — Ambient (LM19) moving average —
-volatile float   ambient_buf[100];
+volatile float   ambient_buf[3];
 volatile uint8_t ambient_index = 0;
 volatile uint8_t ambient_count = 0;
 volatile float   ambient_sum   = 0;
 volatile float moving_average_ambient      = 0;
 volatile uint8_t ambient_temp_update_flag  = 0;
 // — Plant (LM92) moving average —
-volatile float   plant_buf[100];
+volatile float   plant_buf[3];
 volatile uint8_t plant_index   = 0;
 volatile uint8_t plant_count   = 0;
 volatile float   plant_sum     = 0;
@@ -57,8 +57,12 @@ void push_ambient(float sample) {
     ambient_buf[ambient_index] = sample;
     ambient_sum += sample;
     ambient_index = (ambient_index + 1) % window_size;
-    if (ambient_count < window_size) ambient_count++;
-    moving_average_ambient     = ambient_sum / ambient_count;
+    if (ambient_count < window_size) {
+        ambient_count++;
+    } else {
+        ambient_count = 0;
+    }
+    moving_average_ambient     = ambient_sum / window_size;
     ambient_temp_update_flag   = 1;
 }
 
@@ -68,8 +72,12 @@ void push_plant(float sample) {
     plant_buf[plant_index] = sample;
     plant_sum += sample;
     plant_index = (plant_index + 1) % window_size;
-    if (plant_count < window_size) plant_count++;
-    moving_average_plant       = plant_sum / plant_count;
+    if (plant_count < window_size) {
+        plant_count++;
+    } else {
+        plant_count = 0;
+    }
+    moving_average_plant       = plant_sum / window_size;
     plant_temp_update_flag     = 1;
 }
 
@@ -79,7 +87,7 @@ void compute_temp() {
         __disable_interrupt();
         sample_ready = 0;
         float voltage = ADC_value * 0.000805f;
-        __enable_interrupt();
+        
 
         float numerator = 1.8639f - voltage;
         float denominator = 3.88f * .00001f;

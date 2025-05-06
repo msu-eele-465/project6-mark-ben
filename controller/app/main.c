@@ -62,14 +62,20 @@ uint8_t compute_ledbar() {
         case 2:
             if(led_count < 8) {
                 led_count++;
+            } else if (led_count == 8) {
+                led_count = 0;
             }
             led_pins = ((1u << led_count) - 1) << (8 - led_count);
+            
             break;
         case 1:
             if (led_count < 8) {
                 led_count++;
+            } else if (led_count == 8) {
+                led_count = 0;
             }
             led_pins = (1u << led_count) - 1;
+            
             break;
         default:
             led_count = 0;
@@ -96,8 +102,8 @@ void process_keypad() {
         led_count = 0;
         led_mode = peltier_mode;
         send_i2c_update_flag = 1;
-        //mode_start_time = read_RTC();
-        update_LCD(1, 0xFF,0xFF,0xFF,mode_start_time);
+        //mode_start_time = i2c_read_time();
+        update_LCD(1, 0xFF,0xFF,window_size,0xFF);
     } 
 // ----------------------------------------------------------------------------------------------------------------------------------------
 // ------------- COOL ---------------------------------------------------------------------------------------------------------------------
@@ -107,8 +113,8 @@ void process_keypad() {
         led_count = 0;
         led_mode = peltier_mode;
         send_i2c_update_flag = 1;
-        //mode_start_time = read_RTC();
-        update_LCD(2, 0xFF,0xFF,0xFF,mode_start_time);
+        //mode_start_time = i2c_read_time();
+        update_LCD(2, 0xFF,0xFF,window_size,0xFF);
     } 
 // ----------------------------------------------------------------------------------------------------------------------------------------
 // ------------- MATCH --------------------------------------------------------------------------------------------------------------------
@@ -118,8 +124,8 @@ void process_keypad() {
         led_mode = 0;              
         led_count = 0;             // restart the fill
         send_i2c_update_flag = 1;  
-        //mode_start_time = read_RTC();
-        update_LCD(3, 0xFF,0xFF,0xFF,mode_start_time);
+        mode_start_time = i2c_read_time();
+        update_LCD(3, 0xFF,0xFF,window_size,0xFF);
     }
 
     else if (key == 'D') {
@@ -144,18 +150,22 @@ void process_flags(void) {
 
     if(ambient_temp_update_flag) {
         ambient_temp_update_flag = 0;
-        update_LCD(0xFF, moving_average_ambient, 0xFF, 0xFF, 0xFF);
+        if (peltier_mode != 0) {
+            update_LCD(0xFF, (int) (moving_average_ambient*10), 0xFF, window_size, 0xFF);
+        }
     }
 
     if(plant_temp_update_flag) {
         plant_temp_update_flag = 0;
-        update_LCD(0xFF, 0xFF, moving_average_plant, 0xFF, 0xFF);
+        if (peltier_mode != 0) {
+            update_LCD(0xFF, 0xFF,(int) (moving_average_plant*10), window_size, 0xFF);
+        }
     }
 
-    if(time_spent_update_flag) {
+/*     if(time_spent_update_flag) {
         time_spent_update_flag = 0;
-        //update_LCD(0xFF,0xFF,0xFF,0xFF, read_RTC() - mode_start_time);
-    }
+        update_LCD(0xFF,0xFF,0xFF,0xFF, i2c_read_time() - mode_start_time);
+    } */
 }
 
 void update_peltier_mode(void) {
@@ -178,12 +188,12 @@ void update_peltier_mode(void) {
             float thresh = 0.1f;
             if (dif > thresh) {             // Plant too hot
                 P5OUT &= ~(BIT0|BIT1);
-                P5OUT |= BIT0;
+                P5OUT |= BIT1;
                 led_mode = 2;
                 send_i2c_update_flag = 1;
             } else if (dif < -thresh) {     // Plant too cool
                 P5OUT &= ~(BIT0|BIT1);
-                P5OUT |= BIT1;
+                P5OUT |= BIT0;
                 led_mode = 1;        
                 send_i2c_update_flag = 1;        
             } else {
@@ -222,7 +232,7 @@ int main(void)
                                             // to activate previously configured port settings
     UCB0CTLW0 &= ~UCSWRST;                // Take out of reset
     UCB0IE |= UCTXIE0;
-    UCB0IE |= UCRXIE0;
+    //UCB0IE |= UCRXIE0;
 
     __enable_interrupt();
 
@@ -233,13 +243,11 @@ int main(void)
         if (plant_read_flag) {
             plant_read_flag = 0;
             int raw = i2c_read_lm92();
-            int8_t  msb = (raw >> 8) & 0xFF;
-            uint8_t lsb = raw & 0xFF;
-            float temp_c = msb + (lsb / 256.0f);
+            float temp_c = raw*0.0625;
             push_plant(temp_c);
         }
-        if(peltier_mode != 0) {
-/*             if((read_RTC() - mode_start_time) >= 300) {
+/*         if(peltier_mode != 0) {
+             if((i2c_read_time() - mode_start_time) >= 300) {
                 peltier_mode = 0;
                 mode_start_time = 0;
                 ambient_temp_update_flag = 0;
@@ -247,9 +255,9 @@ int main(void)
                 led_mode = 0;
                 plant_read_flag = 0;
                 update_LCD(0xFE, 0xFE, 0xFE, 0xFE, 0xFE);
-            } */
+            }  */
             update_peltier_mode();
-        }
+        
         while(i2c_busy);
         process_flags();
     }

@@ -72,8 +72,8 @@ void update_LCD_raw(uint8_t opcode, unsigned int operand) {
 
     UCB0CTLW0 |= UCTXSTT;
     int i;
-    for (i = 0; i < 4; i++) {
-        while(!(UCB0IFG & UCTXIFG));
+    for (i = 0; i < 3; i++) {
+        while(!(UCB0IFG & UCTXIFG0));
         UCB0TXBUF = lcdData[i];
     }
 
@@ -124,19 +124,19 @@ int i2c_read_lm92() {
 
     UCB0CTLW0 |= UCTXSTT; // Generate start condition
 
-    while (!(UCB0IFG & UCRXIFG));
+    while (!(UCB0IFG & UCRXIFG0));
     high_byte = UCB0RXBUF;
 
-    while (!(UCB0IFG & UCRXIFG));
+    while (!(UCB0IFG & UCRXIFG0));
     low_byte = UCB0RXBUF;
 
     UCB0CTLW0 |= UCTR; // Switch to tx
-
+    i2c_busy = 0;
     return (high_byte << 5) + (low_byte >> 3);
 }
 
 int i2c_read_time() {
-    int time_byte;
+    /* int time_byte;
     int time = 0;
 
     while (i2c_busy);
@@ -149,7 +149,7 @@ int i2c_read_time() {
 
     UCB0CTLW0 |= UCTXSTT; // Generate start condition
 
-    while (!(UCB0IFG & UCRXIFG));
+    while (!(UCB0IFG & UCRXIFG0));
     time_byte = UCB0RXBUF;
 
     UCB0CTLW0 |= UCTR; // Switch to tx
@@ -163,9 +163,9 @@ int i2c_read_time() {
         last_time = time - 60;
     } else {
         full_time += (time - last_time);
-        last_time = time
+        last_time = time;
     }
-
-    return full_time;
-}
+ */
+    return 5;
+} 
  
