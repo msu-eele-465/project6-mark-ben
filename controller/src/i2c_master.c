@@ -6,6 +6,9 @@
 
 volatile int i2c_busy = 0;
 
+int last_time = 0;
+int full_time = 0;
+
 void i2c_master_setup(void) {
     //-- eUSCI_B0 --
     UCB0CTLW0 |= UCSWRST;
@@ -130,5 +133,39 @@ int i2c_read_lm92() {
     UCB0CTLW0 |= UCTR; // Switch to tx
 
     return (high_byte << 5) + (low_byte >> 3);
+}
+
+int i2c_read_time() {
+    int time_byte;
+    int time = 0;
+
+    while (i2c_busy);
+    i2c_busy = 1;
+
+    UCB0CTLW0 &= ~UCTR; // Switch to receive
+    UCB0I2CSA = 0b1101000; // Set slave address
+
+    UCB0TBCNT = 1; // Set count
+
+    UCB0CTLW0 |= UCTXSTT; // Generate start condition
+
+    while (!(UCB0IFG & UCRXIFG));
+    time_byte = UCB0RXBUF;
+
+    UCB0CTLW0 |= UCTR; // Switch to tx
+
+    time = (time_byte & 0x0F);
+    time += ((time_byte & 0x0F) >> 4) * 10;
+
+    if (time < last_time) {
+        time += 60;
+        full_time += (time - last_time);
+        last_time = time - 60;
+    } else {
+        full_time += (time - last_time);
+        last_time = time
+    }
+
+    return full_time;
 }
  
